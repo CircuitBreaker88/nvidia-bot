@@ -1,10 +1,28 @@
+#      FairGame - Automated Purchasing Program
+#      Copyright (C) 2021  Hari Nagarajan
+#
+#      This program is free software: you can redistribute it and/or modify
+#      it under the terms of the GNU General Public License as published by
+#      the Free Software Foundation, either version 3 of the License, or
+#      (at your option) any later version.
+#
+#      This program is distributed in the hope that it will be useful,
+#      but WITHOUT ANY WARRANTY; without even the implied warranty of
+#      MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#      GNU General Public License for more details.
+#
+#      You should have received a copy of the GNU General Public License
+#      along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#      The author may be contacted through the project's GitHub, at:
+#      https://github.com/Hari-Nagarajan/fairgame
+
 import json
 import webbrowser
 from time import sleep
 
 from chromedriver_py import binary_path  # this will get you the path variable
 from selenium import webdriver
-from selenium.webdriver import ChromeOptions
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 
@@ -19,9 +37,9 @@ import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
-from notifications.notifications import NotificationHandler
 from utils.json_utils import find_values
 from utils.logger import log
+from utils.selenium_utils import enable_headless
 
 BEST_BUY_PDP_URL = "https://api.bestbuy.com/click/5592e2b895800000/{sku}/pdp"
 BEST_BUY_CART_URL = "https://api.bestbuy.com/click/5592e2b895800000/{sku}/cart"
@@ -39,17 +57,16 @@ DEFAULT_HEADERS = {
 
 options = Options()
 options.page_load_strategy = "eager"
-chrome_options = ChromeOptions()
-chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-chrome_options.add_experimental_option("useAutomationExtension", False)
+options.add_experimental_option("excludeSwitches", ["enable-automation"])
+options.add_experimental_option("useAutomationExtension", False)
 prefs = {"profile.managed_default_content_settings.images": 2}
-chrome_options.add_experimental_option("prefs", prefs)
-chrome_options.add_argument("user-data-dir=.profile")
+options.add_experimental_option("prefs", prefs)
+options.add_argument("user-data-dir=.profile-bb")
 
 
 class BestBuyHandler:
-    def __init__(self, sku_id):
-        self.notification_handler = NotificationHandler()
+    def __init__(self, sku_id, notification_handler, headless=False):
+        self.notification_handler = notification_handler
         self.sku_id = sku_id
         self.session = requests.Session()
         self.auto_buy = False
@@ -78,18 +95,15 @@ class BestBuyHandler:
 
         if self.auto_buy:
             log.info("Loading headless driver.")
-            # options.add_argument('headless')  # This messes up the cookies for some reason.
+            if headless:
+                enable_headless()  # TODO - check if this still messes up the cookies.
             options.add_argument(
-                "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36"
-            )
-            chrome_options.add_argument(
                 "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36"
             )
 
             self.driver = webdriver.Chrome(
                 executable_path=binary_path,
                 options=options,
-                chrome_options=chrome_options,
             )
             log.info("Loading https://www.bestbuy.com.")
             self.login()
@@ -159,6 +173,7 @@ class BestBuyHandler:
             self.notification_handler.send_notification(
                 f"SKU: {self.sku_id} in stock: {cart_url}"
             )
+            sleep(5)
 
     def in_stock(self):
         log.info("Checking stock")

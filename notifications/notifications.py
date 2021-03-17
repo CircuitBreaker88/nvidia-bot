@@ -1,43 +1,95 @@
-from notifications.providers.discord import DiscordHandler
-from notifications.providers.pavlok import PavlokHandler
-from notifications.providers.slack import SlackHandler
-from notifications.providers.telegram import TelegramHandler
-from notifications.providers.twilio import TwilioHandler
+#      FairGame - Automated Purchasing Program
+#      Copyright (C) 2021  Hari Nagarajan
+#
+#      This program is free software: you can redistribute it and/or modify
+#      it under the terms of the GNU General Public License as published by
+#      the Free Software Foundation, either version 3 of the License, or
+#      (at your option) any later version.
+#
+#      This program is distributed in the hope that it will be useful,
+#      but WITHOUT ANY WARRANTY; without even the implied warranty of
+#      MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#      GNU General Public License for more details.
+#
+#      You should have received a copy of the GNU General Public License
+#      along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#      The author may be contacted through the project's GitHub, at:
+#      https://github.com/Hari-Nagarajan/fairgame
+
+import queue
+import threading
+from os import path
+from playsound import playsound
+import apprise
+
 from utils.logger import log
+
+TIME_FORMAT = "%Y-%m-%d @ %H:%M:%S"
+
+APPRISE_CONFIG_PATH = "config/apprise.conf"
+NOTIFICATION_SOUND_PATH = "notifications/notify.mp3"
+PURCHASE_SOUND_PATH = "notifications/purchase.mp3"
+ALARM_SOUND_PATH = "notifications/alarm-frenzy-493.mp3"
 
 
 class NotificationHandler:
+    enabled_handlers = []
+    sound_enabled = True
+
     def __init__(self):
-        log.info("Initializing notification handlers")
-        self.twilio_handler = TwilioHandler()
-        self.discord_handler = DiscordHandler()
-        self.telegram_handler = TelegramHandler()
-        self.slack_handler = SlackHandler()
-        self.pavlok_handler = PavlokHandler()
-        log.info(f"Enabled Handlers: {self.get_enabled_handlers()}")
+        if path.exists(APPRISE_CONFIG_PATH):
+            log.info(f"Initializing Apprise handler using: {APPRISE_CONFIG_PATH}")
+            self.apb = apprise.Apprise()
+            config = apprise.AppriseConfig()
+            config.add(APPRISE_CONFIG_PATH)
+            # Get the service names from the config, not the Apprise instance when reading from config file
+            for server in config.servers():
+                log.info(f"Found {server.service_name} configuration")
+                self.enabled_handlers.append(server.service_name)
+            self.apb.add(config)
+            self.queue = queue.Queue()
+            self.start_worker()
+            self.enabled = True
+        else:
+            self.enabled = False
+            log.info(f"No Apprise config found at {APPRISE_CONFIG_PATH}.")
+            log.info(f"For notifications, see {APPRISE_CONFIG_PATH}_template")
 
-    def get_enabled_handlers(self):
-        enabled_handlers = []
-        if self.twilio_handler.enabled:
-            enabled_handlers.append("Twilio")
-        if self.discord_handler.enabled:
-            enabled_handlers.append("Discord")
-        if self.telegram_handler.enabled:
-            enabled_handlers.append("Telegram")
-        if self.slack_handler.enabled:
-            enabled_handlers.append("Slack")
-        if self.pavlok_handler.enabled:
-            enabled_handlers.append("Pavlok")
-        return enabled_handlers
+    def send_notification(self, message, ss_name=[], **kwargs):
+        if self.enabled:
+            self.queue.put((message, ss_name))
 
-    def send_notification(self, message):
-        if self.twilio_handler.enabled:
-            self.twilio_handler.send(message)
-        if self.discord_handler.enabled:
-            self.discord_handler.send(message)
-        if self.telegram_handler.enabled:
-            self.telegram_handler.send(message)
-        if self.slack_handler.enabled:
-            self.slack_handler.send(message)
-        if self.pavlok_handler.enabled:
-            self.pavlok_handler.zap()
+    def message_sender(self):
+        while True:
+            message, ss_name = self.queue.get()
+
+            if ss_name:
+                self.apb.notify(body=message, attach=ss_name)
+            else:
+                self.apb.notify(body=message)
+            self.queue.task_done()
+
+    def start_worker(self):
+        threading.Thread(target=self.message_sender, daemon=True).start()
+
+    def play_notify_sound(self):
+        self.play(NOTIFICATION_SOUND_PATH)
+
+    def play_alarm_sound(self):
+        self.play(ALARM_SOUND_PATH)
+
+    def play_purchase_sound(self):
+        self.play(PURCHASE_SOUND_PATH)
+
+    def play(self, audio_file=None, **kwargs):
+        if self.sound_enabled:
+            try:
+                # See https://github.com/TaylorSMarks/playsound
+                playsound(audio_file if audio_file else NOTIFICATION_SOUND_PATH, False)
+            except Exception as e:
+                log.error(e)
+                log.warn(
+                    "Error playing notification sound. Disabling local audio notifications."
+                )
+                self.sound_enabled = False
